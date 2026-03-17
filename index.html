@@ -3,32 +3,24 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>超市語文跑酷 - 修正版</title>
+    <title>超市跑酷 - 穩定修正版</title>
     <style>
-        :root { --primary: #2ecc71; --danger: #e74c3c; --gold: #f1c40f; }
         body, html { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background: #333; font-family: sans-serif; }
         #game-container { position: relative; width: 100vw; height: 100vh; max-width: 600px; margin: 0 auto; background: #fff; }
-        canvas { display: block; width: 100%; height: 100%; touch-action: none; }
+        canvas { display: block; width: 100%; height: 100%; }
         .overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; z-index: 10; }
         .stats { padding: 20px; display: flex; justify-content: space-between; color: #fff; font-size: 20px; text-shadow: 2px 2px 4px #000; }
         .target-card {
             position: absolute; top: 70px; left: 50%; transform: translateX(-50%);
-            background: rgba(255,255,255,0.95); padding: 15px; border-radius: 20px;
-            border: 4px solid var(--primary); text-align: center; pointer-events: auto;
-            cursor: pointer; min-width: 120px;
-        }
-        .target-word { font-size: 28px; font-weight: bold; color: #2c3e50; margin: 5px 0; }
-        .msg-box {
-            position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
-            background: rgba(0,0,0,0.8); color: white; padding: 20px 40px;
-            border-radius: 50px; font-size: 20px; text-align: center; z-index: 100; pointer-events: auto;
+            background: white; padding: 15px; border-radius: 15px;
+            border: 4px solid #2ecc71; text-align: center; pointer-events: auto; min-width: 120px;
         }
         .modal {
             position: absolute; top: 0; left: 0; width: 100%; height: 100%;
             background: rgba(46, 204, 113, 0.9); display: flex; flex-direction: column;
-            justify-content: center; align-items: center; color: white; pointer-events: auto; z-index: 50;
+            justify-content: center; align-items: center; color: white; pointer-events: auto; z-index: 100;
         }
-        .btn { background: white; color: var(--primary); border: none; padding: 15px 50px; font-size: 22px; border-radius: 30px; margin: 10px; cursor: pointer; font-weight: bold; }
+        .btn { background: white; color: #2ecc71; border: none; padding: 15px 50px; font-size: 22px; border-radius: 30px; cursor: pointer; font-weight: bold; }
         .hidden { display: none !important; }
     </style>
 </head>
@@ -37,136 +29,109 @@
 <div id="game-container">
     <canvas id="canvas"></canvas>
     <div class="overlay">
-        <div class="stats"><div id="ui-score">分數: 0</div><div id="ui-coins">💰: 0</div></div>
-        <div id="target-ui" class="target-card hidden" onclick="game.speakTarget()">
+        <div class="stats"><div id="score-txt">分數: 0</div></div>
+        <div id="target-ui" class="target-card hidden" onclick="game.speak()">
+            <div id="word-txt" style="font-size:28px; font-weight:bold;">載入中...</div>
             <small>🔊 點擊發音 & 暫停</small>
-            <div id="target-text" class="target-word">牛奶</div>
         </div>
-        <div id="msg-hint" class="msg-box hidden" onclick="game.unpause()">遊戲暫停中<br>點擊螢幕繼續</div>
         <div id="menu" class="modal">
             <h1>超市跑酷</h1>
-            <button class="btn" onclick="game.init()">開始挑戰</button>
-        </div>
-        <div id="over" class="modal hidden">
-            <h1>挑戰結束</h1>
-            <p id="final-res"></p>
-            <button class="btn" onclick="game.init()">再試一次</button>
+            <button class="btn" onclick="game.start()">點擊開始遊戲</button>
         </div>
     </div>
 </div>
 
 <script>
 const DATA = [
-    { n: "牛奶", p: "niúnǎi", s: "blue" }, { n: "雞腿", p: "jītuǐ", s: "orange" },
-    { n: "衛生紙", p: "wèishēngzhǐ", s: "gray" }, { n: "麵包", p: "miànbāo", s: "brown" },
-    { n: "雞蛋", p: "jīdàn", s: "white" }, { n: "蘋果", p: "píngguǒ", s: "red" },
-    { n: "打折", p: "dǎzhé", s: "yellow" }, { n: "收銀台", p: "shōuyíntái", s: "purple" },
-    { n: "推車", p: "tuīchē", s: "black" }, { n: "冷凍", p: "lěngdòng", s: "cyan" }
+    { n: "牛奶", s: "blue" }, { n: "雞腿", s: "orange" }, { n: "衛生紙", s: "gray" },
+    { n: "麵包", s: "brown" }, { n: "雞蛋", s: "white" }, { n: "蘋果", s: "red" },
+    { n: "打折", s: "yellow" }, { n: "收銀台", s: "purple" }, { n: "推車", s: "black" }
 ];
 
 const canvas = document.getElementById('canvas');
 const ctx = canvas.getContext('2d');
-let gameW, gameH;
+let w, h;
 
 const game = {
-    active: false, paused: false, score: 0, coins: 0, speed: 4, lane: 1, items: [], target: null, bgOffset: 0,
+    running: false, paused: false, lane: 1, items: [], target: null, score: 0, offset: 0, speed: 4,
 
-    init() {
-        this.score = 0; this.speed = 4; this.items = []; this.lane = 1; this.bgOffset = 0;
-        this.nextTarget();
-        this.active = true; this.paused = false;
-        document.querySelectorAll('.modal').forEach(m => m.classList.add('hidden'));
+    start() {
+        document.getElementById('menu').classList.add('hidden');
         document.getElementById('target-ui').classList.remove('hidden');
-        document.getElementById('msg-hint').classList.add('hidden');
-        this.render(); // 啟動循環
+        this.score = 0; this.speed = 4; this.items = []; this.running = true;
+        this.next();
+        this.loop();
     },
 
-    nextTarget() {
+    next() {
         this.target = DATA[Math.floor(Math.random() * DATA.length)];
-        document.getElementById('target-text').innerText = this.target.n;
+        document.getElementById('word-txt').innerText = this.target.n;
     },
 
-    speakTarget() {
+    speak() {
         this.paused = true;
-        document.getElementById('msg-hint').classList.remove('hidden');
-        const msg = new SpeechSynthesisUtterance(this.target.n);
-        msg.lang = 'zh-TW';
-        window.speechSynthesis.speak(msg);
-    },
-
-    unpause() {
-        this.paused = false;
-        document.getElementById('msg-hint').classList.add('hidden');
-    },
-
-    spawnRow() {
-        const correctLane = Math.floor(Math.random() * 3);
-        const others = DATA.filter(d => d.n !== this.target.n);
-        for(let i=0; i<3; i++) {
-            this.items.push({
-                x: i, y: -100,
-                data: i === correctLane ? this.target : others[Math.floor(Math.random()*others.length)],
-                isTarget: i === correctLane,
-                type: 'vocab'
-            });
-        }
+        const m = new SpeechSynthesisUtterance(this.target.n);
+        m.lang = 'zh-TW';
+        m.onend = () => { game.paused = false; };
+        window.speechSynthesis.speak(m);
     },
 
     update() {
-        if(!this.active || this.paused) return;
-        this.bgOffset = (this.bgOffset + this.speed) % 100;
-        this.speed += 0.0005;
-
-        if(this.items.length === 0 || this.items[this.items.length-1].y > 300) this.spawnRow();
-
-        this.items.forEach((it, idx) => {
+        if(!this.running || this.paused) return;
+        this.offset = (this.offset + this.speed) % 100;
+        if(this.items.length === 0 || this.items[this.items.length-1].y > 300) {
+            const ok = Math.floor(Math.random()*3);
+            for(let i=0; i<3; i++) {
+                this.items.push({
+                    x: i, y: -100, 
+                    data: i===ok ? this.target : DATA[Math.floor(Math.random()*DATA.length)],
+                    isOk: i===ok
+                });
+            }
+        }
+        this.items.forEach((it, i) => {
             it.y += this.speed;
-            if(it.y > gameH - 150 && it.y < gameH - 80 && it.x === this.lane) {
-                if(it.isTarget) {
-                    this.score += 10;
-                    this.nextTarget();
-                    this.items = [];
-                } else {
-                    this.active = false;
-                    document.getElementById('over').classList.remove('hidden');
-                    document.getElementById('final-res').innerText = `分數: ${this.score}`;
-                }
+            if(it.y > h-150 && it.y < h-80 && it.x === this.lane) {
+                if(it.isOk) { this.score+=10; this.next(); this.items=[]; }
+                else { this.running = false; alert("撞錯了！分數: " + this.score); location.reload(); }
             }
         });
-        this.items = this.items.filter(it => it.y < gameH + 100);
-        document.getElementById('ui-score').innerText = `分數: ${this.score}`;
+        this.items = this.items.filter(it => it.y < h + 100);
+        document.getElementById('score-txt').innerText = "分數: " + this.score;
     },
 
     draw() {
-        ctx.clearRect(0,0, gameW, gameH);
-        // 地板
-        ctx.fillStyle = "#bdc3c7"; ctx.fillRect(0,0, gameW, gameH);
-        ctx.strokeStyle = "#fff"; ctx.lineWidth = 2;
+        ctx.fillStyle = "#bdc3c7"; ctx.fillRect(0,0,w,h);
+        ctx.strokeStyle = "#fff";
         for(let i=-1; i<12; i++) {
-            let y = (i * 100 + this.bgOffset);
-            ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(gameW, y); ctx.stroke();
+            ctx.beginPath(); ctx.moveTo(0, i*100+this.offset); ctx.lineTo(w, i*100+this.offset); ctx.stroke();
         }
-        // 玩家
-        const px = gameW*0.23 + this.lane * (gameW*0.27);
-        ctx.fillStyle = "#2c3e50"; ctx.fillRect(px - 30, gameH - 140, 60, 80);
-        ctx.fillStyle = "white"; ctx.font = "30px Arial"; ctx.fillText("🛒", px-15, gameH-90);
-        // 物體
+        const px = w*0.23 + this.lane*(w*0.27);
+        ctx.fillStyle = "#2c3e50"; ctx.fillRect(px-30, h-140, 60, 80);
         this.items.forEach(it => {
-            const ix = gameW*0.23 + it.x * (gameW*0.27);
-            ctx.fillStyle = "white"; ctx.beginPath(); ctx.roundRect(ix-45, it.y-40, 90, 80, 10); ctx.fill();
-            ctx.strokeStyle = it.isTarget ? "#2ecc71" : "#95a5a6"; ctx.lineWidth = 3; ctx.stroke();
-            ctx.fillStyle = "#333"; ctx.font = "bold 18px Arial"; ctx.textAlign = "center";
-            ctx.fillText(it.data.n, ix, it.y);
-            ctx.fillStyle = it.data.s; ctx.beginPath(); ctx.arc(ix, it.y - 25, 10, 0, Math.PI*2); ctx.fill();
+            const ix = w*0.23 + it.x*(w*0.27);
+            ctx.fillStyle = "white"; ctx.fillRect(ix-40, it.y-40, 80, 80);
+            ctx.fillStyle = "#333"; ctx.textAlign="center"; ctx.fillText(it.data.n, ix, it.y);
+            ctx.fillStyle = it.data.s; ctx.beginPath(); ctx.arc(ix, it.y-25, 8, 0, 7); ctx.fill();
         });
     },
 
-    render() {
-        if(!this.active) return;
+    loop() {
+        if(!this.running) return;
         this.update();
         this.draw();
-        requestAnimationFrame(() => this.render());
+        requestAnimationFrame(() => this.loop());
     }
 };
 
-window.addEventListener('resize', ()
+function resize() { w=canvas.width=canvas.offsetWidth; h=canvas.height=canvas.offsetHeight; }
+window.addEventListener('resize', resize);
+resize();
+
+canvas.addEventListener('mousedown', (e) => {
+    if(e.clientX < window.innerWidth/2) { if(game.lane>0) game.lane--; }
+    else { if(game.lane<2) game.lane++; }
+});
+</script>
+</body>
+</html>
