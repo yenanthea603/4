@@ -1,0 +1,309 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>超市語文跑酷 - 中級挑戰</title>
+    <style>
+        :root { --primary: #2ecc71; --danger: #e74c3c; --gold: #f1c40f; }
+        body, html { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background: #333; font-family: sans-serif; }
+        #game-container { position: relative; width: 100vw; height: 100vh; max-width: 600px; margin: 0 auto; background: #fff; }
+        canvas { display: block; width: 100%; height: 100%; }
+        
+        /* UI Overlay */
+        .overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; z-index: 10; }
+        .stats { padding: 20px; display: flex; justify-content: space-between; color: #fff; font-size: 20px; text-shadow: 2px 2px 4px #000; }
+        
+        /* 目標顯示區 - 點擊發音 */
+        .target-card {
+            position: absolute; top: 70px; left: 50%; transform: translateX(-50%);
+            background: rgba(255,255,255,0.95); padding: 15px; border-radius: 20px;
+            border: 4px solid var(--primary); text-align: center; pointer-events: auto;
+            cursor: pointer; box-shadow: 0 4px 15px rgba(0,0,0,0.2); min-width: 120px;
+        }
+        .target-card:active { transform: translateX(-50%) scale(0.95); }
+        .target-card small { color: #666; font-size: 12px; display: block; }
+        .target-word { font-size: 28px; font-weight: bold; color: #2c3e50; margin: 5px 0; }
+        .speaker-icon { font-size: 14px; color: var(--primary); }
+
+        /* 螢幕中心提示 */
+        .msg-box {
+            position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+            background: rgba(0,0,0,0.8); color: white; padding: 20px 40px;
+            border-radius: 50px; font-size: 20px; text-align: center;
+        }
+
+        /* 菜單與商店 */
+        .modal {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(46, 204, 113, 0.9); display: flex; flex-direction: column;
+            justify-content: center; align-items: center; color: white; pointer-events: auto;
+        }
+        .btn {
+            background: white; color: var(--primary); border: none; padding: 15px 50px;
+            font-size: 22px; border-radius: 30px; margin: 10px; cursor: pointer; font-weight: bold;
+        }
+        .shop-item { background: rgba(255,255,255,0.2); padding: 15px; margin: 5px; border-radius: 15px; width: 250px; display: flex; justify-content: space-between; align-items: center; }
+        .hidden { display: none !important; }
+    </style>
+</head>
+<body>
+
+<div id="game-container">
+    <canvas id="canvas"></canvas>
+    
+    <div class="overlay">
+        <div class="stats">
+            <div id="ui-score">分數: 0</div>
+            <div id="ui-coins">💰: 0</div>
+        </div>
+
+        <div id="target-ui" class="target-card hidden" onclick="game.speakTarget()">
+            <small>點擊聽發音 & 暫停</small>
+            <div id="target-text" class="target-word">牛奶</div>
+            <div class="speaker-icon">🔊 點擊播放</div>
+        </div>
+
+        <div id="msg-hint" class="msg-box hidden">聽發音中... 點擊螢幕繼續遊戲</div>
+
+        <div id="menu" class="modal">
+            <h1 style="font-size: 40px; margin-bottom: 10px;">超市跑酷</h1>
+            <p style="margin-bottom: 30px;">二語學習：超市篇</p>
+            <button class="btn" onclick="game.init()">開始挑戰</button>
+            <button class="btn" style="background:transparent; border:2px solid white; color:white;" onclick="ui.toggleShop(true)">商店</button>
+        </div>
+
+        <div id="shop" class="modal hidden">
+            <h2>功能裝備</h2>
+            <div class="shop-item"><span>🧲 強力磁鐵</span><button onclick="game.buy('magnet', 30)">30💰</button></div>
+            <button class="btn" onclick="ui.toggleShop(false)">返回</button>
+        </div>
+
+        <div id="over" class="modal hidden">
+            <h1>挑戰結束</h1>
+            <p id="final-res"></p>
+            <button class="btn" onclick="game.init()">再試一次</button>
+        </div>
+    </div>
+</div>
+
+<script>
+/** 1. 數據與 SVG 圖形定義 **/
+const DATA = [
+    { n: "牛奶", p: "niúnǎi", s: "blue" },
+    { n: "雞腿", p: "jītuǐ", s: "orange" },
+    { n: "衛生紙", p: "wèishēngzhǐ", s: "gray" },
+    { n: "麵包", p: "miànbāo", s: "brown" },
+    { n: "雞蛋", p: "jīdàn", s: "white" },
+    { n: "蘋果", p: "píngguǒ", s: "red" },
+    { n: "打折", p: "dǎzhé", s: "yellow" },
+    { n: "收銀台", p: "shōuyíntái", s: "purple" },
+    { n: "推車", p: "tuīchē", s: "black" },
+    { n: "冷凍", p: "lěngdòng", s: "cyan" }
+];
+
+const canvas = document.getElementById('canvas');
+const ctx = canvas.getContext('2d');
+let gameW, gameH, laneW;
+
+/** 2. 遊戲引擎核心 **/
+const game = {
+    active: false,
+    paused: false,
+    score: 0,
+    coins: parseInt(localStorage.getItem('run_coins')) || 0,
+    speed: 3,
+    lane: 1,
+    items: [],
+    target: null,
+    bgOffset: 0,
+    inv: JSON.parse(localStorage.getItem('run_inv')) || { magnet: false },
+    tutorial: true,
+
+    init() {
+        this.score = 0; this.speed = 4; this.items = []; this.lane = 1; this.tutorial = true;
+        this.nextTarget();
+        this.active = true;
+        this.paused = false;
+        ui.hideAll();
+        document.getElementById('target-ui').classList.remove('hidden');
+        this.loop();
+    },
+
+    nextTarget() {
+        this.target = DATA[Math.floor(Math.random() * DATA.length)];
+        document.getElementById('target-text').innerText = this.target.n;
+    },
+
+    speakTarget() {
+        if(!this.active) return;
+        this.paused = true;
+        document.getElementById('msg-hint').classList.remove('hidden');
+        const msg = new SpeechSynthesisUtterance(this.target.n);
+        msg.lang = 'zh-TW';
+        msg.onend = () => { /* 播放完畢不自動開始，等玩家點擊 */ };
+        window.speechSynthesis.speak(msg);
+    },
+
+    unpause() {
+        if(this.paused) {
+            this.paused = false;
+            document.getElementById('msg-hint').classList.add('hidden');
+            this.loop();
+        }
+    },
+
+    buy(id, price) {
+        if(this.coins >= price) {
+            this.coins -= price;
+            this.inv[id] = true;
+            localStorage.setItem('run_coins', this.coins);
+            localStorage.setItem('run_inv', JSON.stringify(this.inv));
+            alert("購買成功！");
+        } else alert("金幣不足");
+    },
+
+    spawnRow() {
+        const correctLane = Math.floor(Math.random() * 3);
+        const others = DATA.filter(d => d.n !== this.target.n);
+        for(let i=0; i<3; i++) {
+            this.items.push({
+                x: i, y: -100,
+                data: i === correctLane ? this.target : others[Math.floor(Math.random()*others.length)],
+                isTarget: i === correctLane,
+                type: 'vocab'
+            });
+        }
+        // 隨機加金幣
+        if(Math.random() > 0.5) this.items.push({ x: Math.floor(Math.random()*3), y: -300, type: 'coin' });
+    },
+
+    update() {
+        if(!this.active || this.paused) return;
+
+        this.bgOffset = (this.bgOffset + this.speed) % 100;
+        this.speed += 0.0005;
+
+        if(this.items.length === 0 || this.items[this.items.length-1].y > 250) {
+            this.spawnRow();
+        }
+
+        this.items.forEach((it, idx) => {
+            it.y += this.speed;
+
+            // 磁鐵
+            if(this.inv.magnet && it.type === 'coin' && it.y > gameH*0.5) {
+                it.x += (this.lane - it.x) * 0.1;
+            }
+
+            // 碰撞
+            if(it.y > gameH - 150 && it.y < gameH - 80 && Math.abs(it.x - this.lane) < 0.3) {
+                if(it.type === 'vocab') {
+                    if(it.isTarget) {
+                        this.score += 10;
+                        this.nextTarget();
+                        this.items = []; // 答對清空，準備下一題
+                    } else {
+                        this.end();
+                    }
+                } else {
+                    this.coins++;
+                    this.items.splice(idx, 1);
+                }
+            }
+        });
+
+        this.items = this.items.filter(it => it.y < gameH + 100);
+        document.getElementById('ui-score').innerText = `分數: ${this.score}`;
+        document.getElementById('ui-coins').innerText = `💰: ${this.coins}`;
+    },
+
+    draw() {
+        ctx.clearRect(0,0, gameW, gameH);
+
+        // 1. 繪製超市地板與透視線
+        ctx.fillStyle = "#bdc3c7";
+        ctx.fillRect(0,0, gameW, gameH);
+        ctx.strokeStyle = "#ecf0f1";
+        ctx.lineWidth = 2;
+        for(let i=0; i<10; i++) {
+            let y = ((i * 100 + this.bgOffset) % gameH);
+            ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(gameW, y); ctx.stroke();
+        }
+
+        // 2. 賽道
+        ctx.fillStyle = "rgba(0,0,0,0.1)";
+        ctx.fillRect(gameW*0.1, 0, gameW*0.8, gameH);
+
+        // 3. 玩家 (購物車)
+        const px = gameW*0.23 + this.lane * (gameW*0.27);
+        ctx.fillStyle = "#2c3e50";
+        ctx.fillRect(px - 30, gameH - 140, 60, 80);
+        ctx.fillStyle = "#ecf0f1";
+        ctx.fillText("🛒", px - 10, gameH - 100);
+
+        // 4. 障礙物與金幣
+        this.items.forEach(it => {
+            const ix = gameW*0.23 + it.x * (gameW*0.27);
+            if(it.type === 'vocab') {
+                ctx.fillStyle = "white";
+                ctx.beginPath(); ctx.roundRect(ix-45, it.y-40, 90, 80, 10); ctx.fill();
+                ctx.strokeStyle = it.isTarget ? "#27ae60" : "#95a5a6";
+                ctx.lineWidth = 3; ctx.stroke();
+                
+                ctx.fillStyle = "#333";
+                ctx.font = "bold 18px Arial"; ctx.textAlign = "center";
+                ctx.fillText(it.data.n, ix, it.y);
+                ctx.font = "12px Arial";
+                ctx.fillText(it.data.p, ix, it.y + 20);
+                
+                // 簡單圖形代表圖片 (根據顏色)
+                ctx.fillStyle = it.data.s;
+                ctx.beginPath(); ctx.arc(ix, it.y - 25, 10, 0, Math.PI*2); ctx.fill();
+            } else {
+                ctx.fillStyle = "gold";
+                ctx.beginPath(); ctx.arc(ix, it.y, 15, 0, Math.PI*2); ctx.fill();
+                ctx.fillStyle = "orange"; ctx.fillText("₵", ix, it.y+5);
+            }
+        });
+
+        if(this.active && !this.paused) requestAnimationFrame(() => this.draw());
+    },
+
+    loop() { this.update(); this.draw(); },
+
+    end() {
+        this.active = false;
+        localStorage.setItem('run_coins', this.coins);
+        document.getElementById('final-res').innerText = `最終分數: ${this.score}`;
+        ui.showOver();
+    }
+};
+
+/** 3. 控制與 UI **/
+const ui = {
+    hideAll() { document.querySelectorAll('.modal').forEach(m => m.classList.add('hidden')); },
+    toggleShop(show) { document.getElementById('shop').classList.toggle('hidden', !show); },
+    showOver() { document.getElementById('over').classList.remove('hidden'); }
+};
+
+window.addEventListener('resize', () => {
+    gameW = canvas.width = canvas.offsetWidth;
+    gameH = canvas.height = canvas.offsetHeight;
+});
+window.dispatchEvent(new Event('resize'));
+
+// 操作：點擊左右切換
+canvas.addEventListener('mousedown', (e) => {
+    if(game.paused) { game.unpause(); return; }
+    if(e.clientX < window.innerWidth/2) { if(game.lane > 0) game.lane--; }
+    else { if(game.lane < 2) game.lane++; }
+});
+window.addEventListener('keydown', (e) => {
+    if(game.paused) { game.unpause(); return; }
+    if(e.key === "ArrowLeft" && game.lane > 0) game.lane--;
+    if(e.key === "ArrowRight" && game.lane < 2) game.lane++;
+});
+</script>
+</body>
+</html>
